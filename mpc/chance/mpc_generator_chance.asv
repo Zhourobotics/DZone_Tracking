@@ -1,0 +1,126 @@
+
+%% Dynamics, i.e. equlity constraints
+% RK integrator is used to discretize the continuous-time dynamics
+% model.eq = @(z) RK2(z((model.nin + 1) : model.nvar), ...
+%      z(1 : model.nin), @simple_dynamics, model.dt);
+model.eq = @(z)first_order_dynamics(z);
+
+model.E = [zeros(model.neq, model.nin), eye(model.neq)];
+%% Inequality constraints
+% upper/lower variable bounds lb <= x <= ub
+model.lb = zeros(1, model.nvar);
+model.ub = zeros(1, model.nvar);
+
+%% first-order control
+% model.lb(index.z.inputs)  =  repmat([-3, -3, -3], 1, model.nRobot);
+% model.ub(index.z.inputs)  =  repmat([+3, +3, +3], 1, model.nRobot);
+model.lb(index.z.inputs) = repmat([-0.2, -0.2, -0.2], 1, model.nRobot);
+model.ub(index.z.inputs) = repmat([+0.2, +0.2, +0.2], 1, model.nRobot);
+
+model.lb(index.z.pos) = repmat([-10, -10, -10], 1, model.nRobot); % fixed height
+model.ub(index.z.pos) = repmat([+10, +10, +10], 1, model.nRobot); % fixed height
+
+% model.lb(index.z.vel) = repmat([-2, -2, -2], 1, model.nRobot);
+% model.ub(index.z.vel) = repmat([+2, +2, +2], 1, model.nRobot);
+
+% general nonlinear inequalities hl <= h(x) <= hu
+model.ineq = @(z, p) mpc_nonlinIneq_chance(z, p);
+% upper/lower bound for inequalities
+% type-I zone constraints
+% type-II zone constraints
+% inter-robot collision avoidance
+% connectivity maintenance
+
+% inter_dist_lb = model.min_dist * (ones(nRobot, nRobot) - eye(nRobot));
+% inter_dist_ub = +inf * (ones(nRobot, nRobot) - eye(nRobot));
+% for iRobot = 1:nRobot
+%      inter_dist_ub(iRobot, iRobot) = 0;
+% end
+
+% model.hl = [zeros(1, nRobot * nTypeI), ...
+%             zeros(1, nRobot * nTypeII), ...
+%             reshape(inter_dist_lb, [1, nRobot*nRobot])];
+% model.hu = [+inf * ones(1, nRobot * nTypeI), ...
+%             +inf * ones(1, nRobot * nTypeII), ...
+%             reshape(inter_dist_ub, [1, nRobot*nRobot])];
+
+model.hl = [zeros(1, nRobot * nTypeI), zeros(1, nRobot * nTypeII)];
+model.hu = [+inf * ones(1, nRobot * nTypeI), +inf * ones(1, nRobot * nTypeII)];
+
+% model.hl = [zeros(1, nRobot * nTypeI)];
+% model.hu = [+inf * ones(1, nRobot * nTypeI)];
+        
+%% Objective function
+model.objective  = @(z, p) mpc_objective_chance(z, p);
+model.objectiveN = @(z, p) mpc_objectiveN_chance(z, p); 
+% model.objective  = @(z, p) simple_objective(z,p);
+% model.objectiveN  = @(z, p) simple_objectiveN(z,p);
+
+%% Initial and final conditions
+model.xinitidx = [index.z.pos];
+
+disp(model.xinitidx);
+
+%% Define solver options
+% solver_name = strcat('FORCESNLPsolver_test3');
+solver_name = strcat('FORCESNLPsolver_zone2_', num2str(model.nRobot), '_', num2str(model.nTarget), '_exp', num2str(config.expID));
+codeoptions = getOptions(solver_name);
+% codeoptions.platform    = 'Generic';% target platform
+codeoptions.maxit       = 500;     % maximum number of iterations
+codeoptions.printlevel  = 0;        % use printlevel = 2 to print progress
+                                    % (but not for timings)
+codeoptions.optlevel    = 2;        % 0: no optimization, 
+                                    % 1: optimize for size, 
+                                    % 2: optimize for speed, 
+                                    % 3: optimize for size & speed
+codeoptions.overwrite   = 1;
+codeoptions.cleanup     = 1;
+codeoptions.timing      = 1;
+codeoptions.parallel    = 1;        % run prediction on multiple cores 
+                                    % (better for longer horizons)
+codeoptions.threadSafeStorage   = true; % the generated solver can be run
+                                        % in parallel on different threads
+codeoptions.BuildSimulinkBlock  = 0;% skipping builing of simulink S-function
+%codeoptions.nlp.linear_solver   = 'symm_indefinite_fast'; 
+                                    % linear system solver, better for long horizons
+% codeoptions.nlp.linear_solver = 'normal_eqs';
+% codeoptions.nlp.checkFunctions  = 0;% not check the output of the function evaluations
+codeoptions.noVariableElimination = 1;
+codeoptions.nlp.TolStat = 1E-3;     % infinity norm tolerance on stationarity
+codeoptions.nlp.TolEq   = 1E-3;     % infinity norm of residual for equalities
+codeoptions.nlp.TolIneq = 1E-3;     % infinity norm of residual for inequalities
+codeoptions.nlp.TolComp = 1E-3;     % tolerance on complementarity conditions
+
+codeoptions.MEXinterface.dynamics = 1;
+codeoptions.MEXinterface.inequalities = 1;
+codeoptions.MEXinterface.objective = 1;
+% define integrator options
+%codeoptions.nlp.integrator.type = 'ERK2'; % can also be 'ForwardEuler', 
+%                                           % 'ERK2', 'ERK3', 'ERK4', 
+%                                           % 'BackwardEuler', or 'IRK2'
+%codeoptions.nlp.integrator.Ts   = model.dt;
+% codeoptions.nlp.integrator.nodes = 4;
+% change this to your server or leave uncommented for using the standard
+% embotech server at https://www.embotech.com/codegen
+% codeoptions.server = 'http://yourforcesserver.com:8114/v1.5'; 
+
+%% Generate FORCES PRO solver
+fprintf('[%s] Generating new FORCES solver...\n',datestr(now,'HH:MM:SS'));
+FORCES_NLP(model, codeoptions);
+fprintf('[%s] FORCES solver generated OK \n',datestr(now,'HH:MM:SS'));
+
+%% Storing the solver
+% create a folder
+folder_name = ['solver/chance', '/zone2_', num2str(model.nRobot), '_', ...
+    num2str(model.nTarget), '_exp', num2str(config.expID)];
+% folder_name = ['solver/chance/test3'];
+mkdir(folder_name);
+% delete it and create again to remove all files in the folder
+rmdir(folder_name, 's');
+mkdir(folder_name);
+% move the generated solver to the folder
+movefile(solver_name, folder_name);         % move the folder
+movefile([solver_name, '*'], folder_name);  % move the files
+movefile('*forces', folder_name);
+% include path
+setPath;
